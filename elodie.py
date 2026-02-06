@@ -4,6 +4,7 @@ from __future__ import print_function
 import os
 import re
 import sys
+import time
 from datetime import datetime
 
 import click
@@ -36,7 +37,31 @@ from elodie import constants
 
 FILESYSTEM = FileSystem()
 
-def import_file(_file, destination, album_from_folder, trash, allow_duplicates, location=None, time=None):
+
+def _format_eta(processed, total_files, elapsed_seconds):
+    """Format estimated time left as 'a hours z minutes b seconds' or empty string if unknown."""
+    if processed <= 0 or elapsed_seconds <= 0:
+        return ''
+    rate = processed / elapsed_seconds
+    left = total_files - processed
+    if left <= 0:
+        return '0 hours 0 minutes 0 seconds'
+    time_left_seconds = left / rate
+    hours = int(time_left_seconds // 3600)
+    minutes = int((time_left_seconds % 3600) // 60)
+    seconds = int(time_left_seconds % 60)
+    return '{} hours {} minutes {} seconds'.format(hours, minutes, seconds)
+
+
+def _print_progress(line):
+    """Print the progress line with optional color when stdout is a TTY."""
+    if sys.stdout.isatty():
+        print(click.style(line, bold=True, fg='cyan'))
+    else:
+        print(line)
+
+
+def import_file(_file, destination, album_from_folder, trash, allow_duplicates, location=None, time=None, db=None):
     
     _file = _decode(_file)
     destination = _decode(destination)
@@ -71,7 +96,7 @@ def import_file(_file, destination, album_from_folder, trash, allow_duplicates, 
         update_time(media, _file, time)
 
     dest_path = FILESYSTEM.process_file(_file, destination,
-        media, allowDuplicate=allow_duplicates, move=False)
+        media, allowDuplicate=allow_duplicates, move=False, db=db)
     if dest_path:
         log.all('%s -> %s' % (_file, dest_path))
     if trash:
@@ -112,7 +137,7 @@ def _batch(debug, dry_run):
 @click.option('--location', help=('Update the image location. Location '
                                   'should be the name of a place, like "Las '
                                   'Vegas, NV".'))
-@click.option('--time', help=('Update the image time. Time should be in '
+@click.option('--time', 'time_override', help=('Update the image time. Time should be in '
                               'YYYY-mm-dd hh:ii:ss or YYYY-mm-dd format.'))
 @click.option('--debug', default=False, is_flag=True,
               help='Show more verbose debug output.')
@@ -121,7 +146,7 @@ def _batch(debug, dry_run):
 @click.option('--exclude-regex', default=set(), multiple=True,
               help='Regular expression for directories or files to exclude.')
 @click.argument('paths', nargs=-1, type=click.Path())
-def _import(destination, source, file, album_from_folder, trash, allow_duplicates, location, time, debug, dry_run, exclude_regex, paths):
+def _import(destination, source, file, album_from_folder, trash, allow_duplicates, location, time_override, debug, dry_run, exclude_regex, paths):
     """Import files or directories by reading their EXIF and organizing them accordingly.
     """
     constants.debug = debug
@@ -156,16 +181,41 @@ def _import(destination, source, file, album_from_folder, trash, allow_duplicate
             if not FILESYSTEM.should_exclude(path, exclude_regex_list, True):
                 files.add(path)
 
+    # Create shared Db instance and counter for batch hash DB updates
+    db = Db()
+    updates_since_flush = 0
+
+    total_files = len(files)
+    processed = 0
+    start_time = time.time()
+
+    print('Processing {} file(s).'.format(total_files))
     for current_file in files:
         dest_path = import_file(current_file, destination, album_from_folder,
-                    trash, allow_duplicates, location, time)
+                    trash, allow_duplicates, location, time_override, db=db)
         if dest_path:
             result.append((current_file, True))
+            updates_since_flush += 1
+            # Flush hash DB every 10 successful updates
+            if updates_since_flush % 10 == 0:
+                db.update_hash_db()
         elif not allow_duplicates:
             result.append((current_file, None))  # duplicate
         else:
             result.append((current_file, False))  # error
         has_errors = has_errors is True or not dest_path
+
+        processed += 1
+        if processed % 100 == 0 or processed == total_files:
+            elapsed = time.time() - start_time
+            eta_str = _format_eta(processed, total_files, elapsed)
+            line = 'Progress: {} / {}'.format(processed, total_files)
+            if eta_str:
+                line += '. Estimated time left: {}'.format(eta_str)
+            _print_progress(line)
+
+    # Final flush for any remaining updates
+    db.update_hash_db()
 
     result.write()
 
@@ -266,7 +316,7 @@ def update_time(media, file_path, time_string):
 @click.option('--location', help=('Update the image location. Location '
                                   'should be the name of a place, like "Las '
                                   'Vegas, NV".'))
-@click.option('--time', help=('Update the image time. Time should be in '
+@click.option('--time', 'time_override', help=('Update the image time. Time should be in '
                               'YYYY-mm-dd hh:ii:ss or YYYY-mm-dd format.'))
 @click.option('--title', help='Update the image title.')
 @click.option('--debug', default=False, is_flag=True,
@@ -275,7 +325,7 @@ def update_time(media, file_path, time_string):
               help='Show what would be done without making any changes.')
 @click.argument('paths', nargs=-1,
                 required=True)
-def _update(album, location, time, title, paths, debug, dry_run):
+def _update(album, location, time_override, title, paths, debug, dry_run):
     """Update a file's EXIF. Automatically modifies the file's location and file name accordingly.
     """
     constants.debug = debug
@@ -291,13 +341,30 @@ def _update(album, location, time, title, paths, debug, dry_run):
         else:
             files.add(path)
 
+    # Create shared Db instance and counter for batch hash DB updates
+    db = Db()
+    updates_since_flush = 0
+
+    total_files = len(files)
+    processed = 0
+    start_time = time.time()
+
+    print('Processing {} file(s).'.format(total_files))
     for current_file in files:
+        processed += 1
         if not os.path.exists(current_file):
             has_errors = True
             result.append((current_file, False))
             log.warn('Could not find %s' % current_file)
             log.all('{"source":"%s", "error_msg":"Could not find %s"}' %
                       (current_file, current_file))
+            if processed % 100 == 0 or processed == total_files:
+                elapsed = time.time() - start_time
+                eta_str = _format_eta(processed, total_files, elapsed)
+                line = 'Progress: {} / {}'.format(processed, total_files)
+                if eta_str:
+                    line += '. Estimated time left: {}'.format(eta_str)
+                _print_progress(line)
             continue
 
         current_file = os.path.expanduser(current_file)
@@ -316,14 +383,21 @@ def _update(album, location, time, title, paths, debug, dry_run):
 
         media = Media.get_class_by_file(current_file, get_all_subclasses())
         if not media:
+            if processed % 100 == 0 or processed == total_files:
+                elapsed = time.time() - start_time
+                eta_str = _format_eta(processed, total_files, elapsed)
+                line = 'Progress: {} / {}'.format(processed, total_files)
+                if eta_str:
+                    line += '. Estimated time left: {}'.format(eta_str)
+                _print_progress(line)
             continue
 
         updated = False
         if location:
             update_location(media, current_file, location)
             updated = True
-        if time:
-            update_time(media, current_file, time)
+        if time_override:
+            update_time(media, current_file, time_override)
             updated = True
         if album:
             media.set_album(album)
@@ -362,7 +436,7 @@ def _update(album, location, time, title, paths, debug, dry_run):
                     original_base_name.replace('-%s' % original_title, ''))
 
             dest_path = FILESYSTEM.process_file(current_file, destination,
-                updated_media, move=True, allowDuplicate=True)
+                updated_media, move=True, allowDuplicate=True, db=db)
             log.info(u'%s -> %s' % (current_file, dest_path))
             log.all('{"source":"%s", "destination":"%s"}' % (current_file,
                                                                dest_path))
@@ -374,9 +448,25 @@ def _update(album, location, time, title, paths, debug, dry_run):
             result.append((current_file, bool(dest_path)))
             # Trip has_errors to False if it's already False or dest_path is.
             has_errors = has_errors is True or not dest_path
+            if dest_path:
+                updates_since_flush += 1
+                # Flush hash DB every 10 successful updates
+                if updates_since_flush % 10 == 0:
+                    db.update_hash_db()
         else:
             has_errors = False
             result.append((current_file, False))
+
+        if processed % 100 == 0 or processed == total_files:
+            elapsed = time.time() - start_time
+            eta_str = _format_eta(processed, total_files, elapsed)
+            line = 'Progress: {} / {}'.format(processed, total_files)
+            if eta_str:
+                line += '. Estimated time left: {}'.format(eta_str)
+            _print_progress(line)
+
+    # Final flush for any remaining updates
+    db.update_hash_db()
 
     result.write()
     

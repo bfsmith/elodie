@@ -208,7 +208,7 @@ class FileSystem(object):
                         # This helps when re-running the program on file 
                         #  which were already processed.
                         this_value = re.sub(
-                            '^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-',
+                            r'^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-',
                             '',
                             metadata['base_name']
                         )
@@ -281,7 +281,7 @@ class FileSystem(object):
         #  name.
         #  I.e. %date-%original_name-%title.%extension => ['date', 'original_name', 'title', 'extension'] #noqa
         path_parts = re.findall(
-                         '(\%[a-z_]+)',
+                         r'(\%[a-z_]+)',
                          config_file['name']
                      )
 
@@ -341,7 +341,7 @@ class FileSystem(object):
         #  I.e. %foo/%bar => ['foo', 'bar']
         #  I.e. %foo/%bar|%example|"something" => ['foo', 'bar|example|"something"']
         path_parts = re.findall(
-                         '(\%[^/]+)',
+                         r'(\%[^/]+)',
                          config_directory['full_path']
                      )
 
@@ -506,8 +506,9 @@ class FileSystem(object):
 
         return folder_name
 
-    def process_checksum(self, _file, allow_duplicate):
-        db = Db()
+    def process_checksum(self, _file, allow_duplicate, db=None):
+        if db is None:
+            db = Db()
         checksum = db.checksum(_file)
         if(checksum is None):
             log.info('Could not get checksum for %s.' % _file)
@@ -549,7 +550,9 @@ class FileSystem(object):
             print('%s is not a valid media file. Skipping...' % _file)
             return
 
-        checksum = self.process_checksum(_file, allow_duplicate)
+        # Get db from kwargs if provided, otherwise None (process_checksum will create one)
+        db = kwargs.get('db', None)
+        checksum = self.process_checksum(_file, allow_duplicate, db=db)
         if(checksum is None):
             log.info('Original checksum returned None for %s. Skipping...' %
                      _file)
@@ -620,9 +623,13 @@ class FileSystem(object):
                 print(f"[DRY-RUN] Would set utime for: {_file}")
                 print(f"[DRY-RUN] Would set utime from metadata for: {dest_path}")
 
-        db = Db()
-        db.add_hash(checksum, dest_path)
-        db.update_hash_db()
+        # Use shared db if provided, otherwise create new one and write immediately
+        if db is None:
+            db = Db()
+            db.add_hash(checksum, dest_path)
+            db.update_hash_db()
+        else:
+            db.add_hash(checksum, dest_path, write=False)
 
         # Run `after()` for every loaded plugin and if any of them raise an exception
         #  then we skip importing the file and log a message.
@@ -644,7 +651,7 @@ class FileSystem(object):
         date_taken = metadata['date_taken']
         base_name = metadata['base_name']
         year_month_day_match = re.search(
-            '^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})',
+            r'^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})',
             base_name
         )
         if(year_month_day_match is not None):
