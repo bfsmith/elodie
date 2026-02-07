@@ -190,7 +190,7 @@ def _import(destination, source, file, album_from_folder, trash, allow_duplicate
     start_time = time.time()
 
     print('Processing {} file(s).'.format(total_files))
-    for current_file in files:
+    for current_file in sorted(files):
         dest_path = import_file(current_file, destination, album_from_folder,
                     trash, allow_duplicates, location, time_override, db=db)
         if dest_path:
@@ -217,7 +217,8 @@ def _import(destination, source, file, album_from_folder, trash, allow_duplicate
     # Final flush for any remaining updates
     db.update_hash_db()
 
-    result.write()
+    elapsed = time.time() - start_time
+    result.write(duration_seconds=elapsed)
 
     if has_errors:
         sys.exit(1)
@@ -243,14 +244,15 @@ def _generate_db(source, debug):
     db.backup_hash_db()
     db.reset_hash_db()
 
-    for current_file in FILESYSTEM.get_all_files(source):
+    start_time = time.time()
+    for current_file in sorted(FILESYSTEM.get_all_files(source)):
         result.append((current_file, True))
         db.add_hash(db.checksum(current_file), current_file)
         log.progress()
     
     db.update_hash_db()
     log.progress('', True)
-    result.write()
+    result.write(duration_seconds=time.time() - start_time)
 
 @click.command('verify')
 @click.option('--debug', default=False, is_flag=True,
@@ -259,6 +261,7 @@ def _verify(debug):
     constants.debug = debug
     result = Result()
     db = Db()
+    start_time = time.time()
     for checksum, file_path in db.all():
         if not os.path.isfile(file_path):
             result.append((file_path, False))
@@ -274,7 +277,7 @@ def _verify(debug):
             log.progress('x')
 
     log.progress('', True)
-    result.write()
+    result.write(duration_seconds=time.time() - start_time)
 
 
 def update_location(media, file_path, location_name):
@@ -350,7 +353,7 @@ def _update(album, location, time_override, title, paths, debug, dry_run):
     start_time = time.time()
 
     print('Processing {} file(s).'.format(total_files))
-    for current_file in files:
+    for current_file in sorted(files):
         processed += 1
         if not os.path.exists(current_file):
             has_errors = True
@@ -468,7 +471,8 @@ def _update(album, location, time_override, title, paths, debug, dry_run):
     # Final flush for any remaining updates
     db.update_hash_db()
 
-    result.write()
+    elapsed = time.time() - start_time
+    result.write(duration_seconds=elapsed)
     
     if has_errors:
         sys.exit(1)

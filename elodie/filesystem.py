@@ -586,10 +586,14 @@ class FileSystem(object):
         exif_original_file = _file + '_original'
 
         # Check if the source file was processed by exiftool and an _original
-        # file was created.
+        # file was created. Only treat it as the backup when it's a file;
+        # on Windows, a directory with that name would cause move/remove to fail.
         exif_original_file_exists = False
-        if(os.path.exists(exif_original_file)):
+        if os.path.isfile(exif_original_file):
             exif_original_file_exists = True
+        elif os.path.exists(exif_original_file):
+            log.warn('Skipping %s: path exists but is not a file (e.g. directory)' %
+                     exif_original_file)
 
         if(move is True):
             stat = os.stat(_file)
