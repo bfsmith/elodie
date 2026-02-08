@@ -41,14 +41,7 @@ Duplicate, not imported        0"""
     call_result_and_assert(result, expected)
 
 def test_add_multiple_rows_with_failure():
-    expected = """****** ERROR DETAILS ******
-File
-------
-id1
-id2
-
-
-****** SUMMARY ******
+    expected = """****** SUMMARY ******
 Metric                     Count
 -----------------------  -------
 Success                        0
@@ -60,13 +53,7 @@ Duplicate, not imported        0"""
     call_result_and_assert(result, expected)
 
 def test_add_multiple_rows_with_failure_and_success():
-    expected = """****** ERROR DETAILS ******
-File
-------
-id1
-
-
-****** SUMMARY ******
+    expected = """****** SUMMARY ******
 Metric                     Count
 -----------------------  -------
 Success                        1
@@ -78,14 +65,7 @@ Duplicate, not imported        0"""
     call_result_and_assert(result, expected)
 
 def test_add_multiple_rows_with_duplicates():
-    expected = """****** DUPLICATE (NOT IMPORTED) DETAILS ******
-File
-------
-id1
-id2
-
-
-****** SUMMARY ******
+    expected = """****** SUMMARY ******
 Metric                     Count
 -----------------------  -------
 Success                        0
@@ -97,19 +77,7 @@ Duplicate, not imported        2"""
     call_result_and_assert(result, expected)
 
 def test_add_multiple_rows_with_success_error_and_duplicate():
-    expected = """****** ERROR DETAILS ******
-File
-------
-id2
-
-
-****** DUPLICATE (NOT IMPORTED) DETAILS ******
-File
-------
-id3
-
-
-****** SUMMARY ******
+    expected = """****** SUMMARY ******
 Metric                     Count
 -----------------------  -------
 Success                        1
@@ -120,3 +88,18 @@ Duplicate, not imported        1"""
     result.append(('id2', False))
     result.append(('id3', None))
     call_result_and_assert(result, expected)
+
+
+def test_write_includes_duration_when_provided():
+    result = Result()
+    result.append(('id1', True))
+    saved_stdout = sys.stdout
+    try:
+        out = StringIO()
+        sys.stdout = out
+        result.write(duration_seconds=125)
+        output = out.getvalue().strip()
+        assert "Time elapsed" in output
+        assert "2 minutes 5 seconds" in output
+    finally:
+        sys.stdout = saved_stdout

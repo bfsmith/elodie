@@ -24,34 +24,32 @@ class Result(object):
             self.error += 1
             self.error_items.append(id)
 
-    def write(self):
+    def write(self, duration_seconds=None):
         print("\n")
-        if self.error > 0:
-            error_headers = ["File"]
-            error_result = []
-            for id in self.error_items:
-                error_result.append([id])
-
-            print("****** ERROR DETAILS ******")
-            print(tabulate(error_result, headers=error_headers))
-            print("\n")
-
-        if self.duplicate > 0:
-            duplicate_headers = ["File"]
-            duplicate_result = []
-            for id in self.duplicate_items:
-                duplicate_result.append([id])
-
-            print("****** DUPLICATE (NOT IMPORTED) DETAILS ******")
-            print(tabulate(duplicate_result, headers=duplicate_headers))
-            print("\n")
-
         headers = ["Metric", "Count"]
         result = [
-                    ["Success", self.success],
-                    ["Error", self.error],
-                    ["Duplicate, not imported", self.duplicate]
-                 ]
+            ["Success", self.success],
+            ["Error", self.error],
+            ["Duplicate, not imported", self.duplicate],
+        ]
+        if duration_seconds is not None:
+            result.append(["Time elapsed", self._format_duration(duration_seconds)])
+            if duration_seconds > 0:
+                total_files = self.success + self.error + self.duplicate
+                rate = total_files / (duration_seconds / 60.0)
+                result.append(["Processing rate", "{:.1f} files / minute".format(rate)])
 
         print("****** SUMMARY ******")
         print(tabulate(result, headers=headers))
+
+    def _format_duration(self, seconds):
+        s = int(round(seconds))
+        if s < 60:
+            return "{} seconds".format(s)
+        elif s < 3600:
+            m, sec = divmod(s, 60)
+            return "{} minutes {} seconds".format(m, sec)
+        else:
+            h, r = divmod(s, 3600)
+            m, sec = divmod(r, 60)
+            return "{} hours {} minutes {} seconds".format(h, m, sec)
