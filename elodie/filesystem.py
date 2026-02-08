@@ -574,7 +574,10 @@ class FileSystem(object):
 
         # If source and destination are identical then
         #  we should not write the file. gh-210
-        if(_file == dest_path):
+        # Use normalized paths so we catch same path on Windows (case, slashes)
+        def _same_path(a, b):
+            return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+        if _same_path(_file, dest_path):
             print('Final source and destination path should not be identical')
             return
 
@@ -612,8 +615,29 @@ class FileSystem(object):
                 # Move the newly processed file with any updated tags to the
                 # destination directory
                 self._file_operation('move', _file, dest_path)
-                # Move the exif _original back to the initial source file
-                self._file_operation('move', exif_original_file, _file)
+                # Move the exif _original back to the initial source file.
+                # On Windows, ensure nothing blocks the move: dest path must not
+                # exist as a directory (WinError 145) or the move can fail and
+                # the fallback copy can then see the source missing.
+                if not constants.dry_run and os.path.exists(_file):
+                    if os.path.isdir(_file):
+                        try:
+                            if not os.listdir(_file):
+                                os.rmdir(_file)
+                            else:
+                                log.warn('Skipping restore of _original: destination is a non-empty directory: %s' % _file)
+                                exif_original_file_exists = False
+                        except OSError:
+                            log.warn('Could not remove destination directory for restore: %s' % _file)
+                            exif_original_file_exists = False
+                    else:
+                        try:
+                            os.remove(_file)
+                        except OSError:
+                            log.warn('Could not remove existing file for restore: %s' % _file)
+                            exif_original_file_exists = False
+                if exif_original_file_exists:
+                    self._file_operation('move', exif_original_file, _file)
             else:
                 self._file_operation('copy', _file, dest_path)
 
